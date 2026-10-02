@@ -1,6 +1,7 @@
 // X is diameter; internal geometry uses radial millimetres and positive depth.
 export function sampleContour(points,d,l){
  if(!(d>0&&l>0)||!Number.isFinite(d+l))throw Error('Задай положительные диаметр и длину заготовки.');
+ if(points.length>250)throw Error('Максимум 250 элементов контура.');
  if(points.length<2)throw Error('Нужно минимум две точки контура.');
  const out=[];
  for(let i=0;i<points.length;i++){
@@ -19,16 +20,16 @@ export function sampleContour(points,d,l){
   const n=Math.max(12,Math.ceil(Math.abs(delta)*R/.1));if(n>5000)throw Error('Слишком большая дуга для симуляции.');
   for(let j=1;j<=n;j++){const t=a0+delta*j/n,q=j===n?b:{r:cr+R*Math.cos(t),z:cz+R*Math.sin(t)};if(q.z<out[out.length-1].z-1e-6||q.r<=0||q.r>d/2+1e-6||q.z>l+1e-6)throw Error('Эта дуга выходит за заготовку или образует поднутрение. Измени сторону дуги.');out.push(q);}
  }
- const last=out[out.length-1];if(last.z<l)out.push({r:last.r,z:l});return out;
+ const last=out[out.length-1];if(last.z<l){if(Math.abs(last.r-d/2)>1e-8)out.push({r:d/2,z:last.z});out.push({r:d/2,z:l});}return out;
 }
-export function buildPlan({d,l,ap,feed,points}){
- if(![ap,feed].every(v=>Number.isFinite(v)&&v>0))throw Error('Для проходов введи ap, подачу и обороты.');
- const profile=sampleContour(points,d,l),R=d/2,clear=Math.max(.5,Math.min(2,ap)),moves=[];let at={r:R+clear,z:-clear};
+export function buildPlan({d,l,ap,feed,points,processing='combined'}){
+ if(!(Number.isFinite(feed)&&feed>0)||processing!=='finish'&&!(Number.isFinite(ap)&&ap>0))throw Error('Для проходов введи ap, подачу и обороты.');
+ const profile=sampleContour(points,d,l),R=d/2,clear=Math.max(.5,Math.min(2,ap||1)),moves=[];let at={r:R+clear,z:-clear};
  const add=(r,z,cut=false,label='Подвод / отвод')=>{const to={r,z};const length=Math.hypot(r-at.r,z-at.z);if(length>1e-8){moves.push({from:at,to,cut,label,seconds:length/(cut?feed:3000)*60});at=to;}if(moves.length>20000)throw Error('Слишком много проходов: увеличь ap.');};
  const safeTo=(r,z)=>{add(R+clear,at.z);add(R+clear,-clear);add(r,-clear);add(r,z);};
  // A monotone external envelope can be roughed with axial passes at radial layers.
- const minR=Math.min(...profile.map(p=>p.r));if((R-minR)/ap>4000)throw Error('Слишком маленькая глубина ap.');
- for(let r=R-ap;r>minR+1e-8;r-=ap){
+ const minR=Math.min(...profile.map(p=>p.r));if(processing!=='finish'&&(R-minR)/ap>4000)throw Error('Слишком маленькая глубина ap.');
+ for(let r=R-ap;processing!=='finish'&&r>minR+1e-8;r-=ap){
   let intervals=[],start=null;
   for(let i=1;i<profile.length;i++){
    const a=profile[i-1],b=profile[i];if(b.z-a.z<1e-8)continue;

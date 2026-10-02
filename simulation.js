@@ -1,39 +1,43 @@
-import {buildPlan,sampleContour} from './contour.js?v=0.4.0';
+import {buildPlan,sampleContour} from './contour.js?v=0.5.0';
 export function mountTurningSimulation(root,read){
  let frame=0,last=0,elapsed=0,running=false,disposed=false,plan=null;
- let saved;try{saved=JSON.parse(localStorage.getItem('turning-contour-v1')||'null')}catch{}
- let points=Array.isArray(saved?.points)?saved.points:[{x:10,z:0},{x:10,z:-10},{x:50,z:-10},{x:50,z:-30}];
- root.innerHTML=`<section class="glass sim"><h3>Контур X/Z</h3><p class="hint">X — диаметр. Торец Z0, глубина в сторону −Z. Прямая с изменением X и Z задаёт конус.</p><label class="stock-length">Длина заготовки L <input class="stock-l" type="number" inputmode="decimal" min="0.001" step="any" value="30"> мм</label><div class="contour-rows"></div><button type="button" class="text-button contour-add">+ Элемент контура</button><button type="button" class="text-button contour-example">Пример Ø50 → Ø10</button><canvas aria-label="Контур и обработка: заготовка вертикально, резец справа, оси X и Z"></canvas><p class="hint sim-info" role="status"></p><div class="sim-controls"><button type="button" class="text-button sim-play">Пуск</button><button type="button" class="text-button sim-pause">Пауза</button><button type="button" class="text-button sim-reset">Сначала</button><label>Просмотр <select class="sim-rate"><option value="1">1×</option><option value="10">10×</option><option value="50">50×</option></select></label></div><small>Учебная 2D-симуляция наружного контура: черновые проходы по Z с входами по X, затем обход профиля по X/Z. Направления строятся автоматически. Поднутрения не поддерживаются. Время включает условные быстрые перемещения 3000 мм/мин. Радиус пластины, державка, патрон и столкновения не моделируются. Это не управляющая программа станка.</small></section>`;
- const canvas=root.querySelector('canvas'),ctx=canvas.getContext('2d'),info=root.querySelector('.sim-info'),rows=root.querySelector('.contour-rows'),length=root.querySelector('.stock-l');
- if(Number(saved?.l)>0)length.value=saved.l;
- const esc=v=>Number.isFinite(Number(v))?String(Number(v)):'';
- function editor(){rows.innerHTML=points.map((p,i)=>`<div class="contour-row" data-index="${i}"><span>${i+1}</span><label>X<input data-key="x" aria-label="X точки ${i+1}, диаметр" type="number" inputmode="decimal" step="any" value="${esc(p.x)}"></label><label>Z<input data-key="z" aria-label="Z точки ${i+1}" type="number" inputmode="decimal" step="any" value="${esc(p.z)}"></label>${i?`<label>Элемент<select data-key="type"><option value="line" ${p.type!=='arc'?'selected':''}>Прямая</option><option value="arc" ${p.type==='arc'?'selected':''}>Дуга R</option></select></label><button type="button" data-remove="${i}" aria-label="Удалить точку ${i+1}">×</button>`:'<small>Начало</small>'}${p.type==='arc'?`<label>R<input data-key="radius" aria-label="Радиус дуги ${i+1}" type="number" min="0.001" step="any" value="${esc(p.radius||5)}"></label><label>Сторона<select data-key="side"><option value="1" ${p.side!==-1?'selected':''}>1</option><option value="-1" ${p.side===-1?'selected':''}>2</option></select></label>`:''}</div>`).join('');}
+ const canvas=document.createElement('canvas');canvas.setAttribute('aria-label','Графический вид контура X/Z');
+ root.innerHTML='<section class="sim shop-sim"><div class="sim-heading"><strong>Графический вид · X/Z</strong><span>Учебная 2D</span></div></section>';
+ const section=root.firstElementChild;section.append(canvas);
+ section.insertAdjacentHTML('beforeend',`<p class="hint sim-info" role="status"></p><div class="sim-controls"><button type="button" class="sim-play">▶ Пуск</button><button type="button" class="sim-pause">Ⅱ Пауза</button><button type="button" class="sim-reset">↺ Сначала</button><label>Просмотр <select class="sim-rate"><option value="1">1×</option><option value="10">10×</option><option value="50">50×</option></select></label></div>`);
+ const ctx=canvas.getContext('2d'),info=root.querySelector('.sim-info');
  function stop(){running=false;cancelAnimationFrame(frame);last=0;}
  function reset(){stop();elapsed=0;plan=null;draw();}
- function values(){return {...read(),l:Number(length.value),points};}
- function save(){try{localStorage.setItem('turning-contour-v1',JSON.stringify({points,l:Number(length.value)}))}catch{}}
- rows.addEventListener('input',e=>{const key=e.target.dataset.key;if(!key)return;const i=Number(e.target.closest('[data-index]').dataset.index);points[i][key]=key==='type'?e.target.value:(e.target.value===''?NaN:Number(e.target.value));if(key==='type'){points[i].radius ||=5;editor();}save();reset();});
- rows.addEventListener('click',e=>{if(e.target.dataset.remove!==undefined){points.splice(Number(e.target.dataset.remove),1);editor();save();reset();}});
- length.addEventListener('input',()=>{save();reset();});
- root.querySelector('.contour-add').onclick=()=>{if(points.length>=100){info.textContent='Максимум 100 элементов.';return;}const p=points[points.length-1];points.push({x:p.x,z:Math.max(-Number(length.value),p.z-5),type:'line'});editor();save();reset();};
- root.querySelector('.contour-example').onclick=()=>{points=[{x:10,z:0},{x:10,z:-10},{x:50,z:-10},{x:50,z:-30}];length.value=30;const d=document.querySelector('#d');if(d){d.value=50;d.dispatchEvent(new Event('input',{bubbles:true}));}editor();save();reset();};
+ function values(){return read()||{};}
  function state(){if(!plan)return {at:null,done:[],current:null,t:0};if(elapsed>=plan.total-1e-8)return {at:plan.moves.at(-1).to,done:plan.moves,current:null,t:1};let left=elapsed,done=[];for(const m of plan.moves){if(left>=m.seconds){left-=m.seconds;done.push(m);continue;}const t=left/m.seconds;return {at:{r:m.from.r+(m.to.r-m.from.r)*t,z:m.from.z+(m.to.z-m.from.z)*t},done,current:m,t};}return {at:plan.moves.at(-1).to,done,current:null,t:1};}
- function draw(){if(disposed)return;const w=Math.max(250,canvas.clientWidth),h=320,dpr=Math.min(3,window.devicePixelRatio||1);canvas.width=w*dpr;canvas.height=h*dpr;ctx.setTransform(dpr,0,0,dpr,0,0);const light=document.body.classList.contains('light'),bg=light?'#edf4fc':'#0b1928',fg=light?'#163454':'#bdd9f4';ctx.fillStyle=bg;ctx.fillRect(0,0,w,h);ctx.strokeStyle=light?'#dce6f1':'#193047';ctx.lineWidth=1;for(let x=0;x<w;x+=24){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,h);ctx.stroke();}for(let y=0;y<h;y+=24){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(w,y);ctx.stroke();}
- const p=values();if(!(p.d>0&&p.l>0)){info.textContent='Введи D заготовки и её длину L.';return;}
- let profile;try{profile=plan?.profile||sampleContour(points,p.d,p.l);}catch(e){info.textContent=e.message;return;}
- const R=p.d/2,scale=Math.min((w-110)/(R+5),240/p.l),axis=34,top=45,X=r=>axis+r*scale,Y=z=>top+z*scale,s=state();
+ function draw(){
+ if(disposed)return;
+ const w=Math.max(250,canvas.clientWidth),h=Math.max(220,canvas.clientHeight||320),dpr=Math.min(3,window.devicePixelRatio||1);
+ canvas.width=w*dpr;canvas.height=h*dpr;ctx.setTransform(dpr,0,0,dpr,0,0);
+ const light=document.body.classList.contains('light'),bg=light?'#dce5ee':'#122335',fg=light?'#18334e':'#c7dbed';
+ ctx.fillStyle=bg;ctx.fillRect(0,0,w,h);ctx.strokeStyle=light?'#b6c7d8':'#2b4056';ctx.lineWidth=1;
+ for(let x=0;x<w;x+=25){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,h);ctx.stroke();}
+ for(let y=0;y<h;y+=25){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(w,y);ctx.stroke();}
+ const p=values();ctx.fillStyle=fg;ctx.font='12px -apple-system,sans-serif';
+ if(!(p.d>0&&p.l>0)){ctx.fillText('Задайте цилиндр XD / L',18,28);info.textContent='Сначала задайте диаметр и длину заготовки.';return;}
+ let profile=[],warning='';try{profile=plan?.profile||(p.points.length>=2?sampleContour(p.points,p.d,p.l):p.points.map(q=>({r:q.x/2,z:-q.z})));}catch(e){warning=e.message;}
+ const R=p.d/2,scale=Math.min((w-100)/p.l,(h-110)/(R+2)),zero=w-55,axis=h-50;
+ const X=z=>zero-z*scale,Y=r=>axis-r*scale,point=(r,z)=>({x:X(z),y:Y(r)}),s=state();
  const bins=480,stock=Array(bins).fill(R),dz=p.l/bins;
- const remove=(m,end)=>{if(!m.cut)return;const a=m.from,b=end;for(let i=0;i<bins;i++){const z=(i+.5)*dz;if(z<Math.min(a.z,b.z)-dz/2||z>Math.max(a.z,b.z)+dz/2)continue;const r=Math.abs(b.z-a.z)<1e-8?Math.min(a.r,b.r):a.r+(b.r-a.r)*Math.max(0,Math.min(1,(z-a.z)/(b.z-a.z)));stock[i]=Math.min(stock[i],r);}};
+ const remove=(m,end)=>{if(!m.cut)return;const a=m.from,b=end;for(let i=0;i<bins;i++){const z=(i+.5)*dz;if(z<Math.min(a.z,b.z)-dz/2||z>Math.max(a.z,b.z)+dz/2)continue;const r=Math.abs(b.z-a.z)<1e-8?Math.min(a.r,b.r):a.r+(b.r-a.r)*Math.max(0,Math.min(1,(z-a.z)/(b.z-a.z)));stock[i]=Math.max(0,Math.min(stock[i],r));}};
  s.done.forEach(m=>remove(m,m.to));if(s.current)remove(s.current,s.at);
- const metal=ctx.createLinearGradient(axis,0,X(R),0);metal.addColorStop(0,'#60778a');metal.addColorStop(.5,'#c9d9e4');metal.addColorStop(1,'#5c7489');ctx.fillStyle=metal;ctx.beginPath();ctx.moveTo(axis,top);for(let i=0;i<bins;i++)ctx.lineTo(X(stock[i]),Y(i*dz));ctx.lineTo(X(stock.at(-1)),Y(p.l));ctx.lineTo(axis,Y(p.l));ctx.closePath();ctx.fill();
- ctx.setLineDash([4,4]);ctx.strokeStyle=fg;ctx.beginPath();ctx.moveTo(axis,20);ctx.lineTo(axis,Y(p.l)+12);ctx.stroke();ctx.setLineDash([]);ctx.strokeStyle='#35b4ff';ctx.lineWidth=2;ctx.beginPath();profile.forEach((q,i)=>i?ctx.lineTo(X(q.r),Y(q.z)):ctx.moveTo(X(q.r),Y(q.z)));ctx.stroke();
- if(plan){ctx.strokeStyle=light?'#27966755':'#62e0ae44';ctx.lineWidth=1;for(const m of plan.moves){if(!m.cut)continue;ctx.beginPath();ctx.moveTo(X(m.from.r),Y(m.from.z));ctx.lineTo(X(m.to.r),Y(m.to.z));ctx.stroke();}}
- const tool=s.at||{r:R+2,z:-1};ctx.fillStyle='#d9a847';ctx.beginPath();ctx.moveTo(X(tool.r),Y(tool.z));ctx.lineTo(X(tool.r)+22,Y(tool.z)-10);ctx.lineTo(X(tool.r)+22,Y(tool.z)+10);ctx.closePath();ctx.fill();ctx.fillStyle='#49667c';ctx.fillRect(X(tool.r)+22,Y(tool.z)-8,35,16);ctx.fillStyle=fg;ctx.font='12px -apple-system,sans-serif';ctx.fillText('+X →',w-62,22);ctx.fillText('−Z ↓',8,305);ctx.fillText('Z0',5,top+4);ctx.fillText('−'+p.l,4,Y(p.l));ctx.fillText('Ø'+p.d,axis+5,25);
- info.textContent=plan?`${Math.round(elapsed/plan.total*100)}% · ${s.current?.label||'Обработка завершена'} · X ${((s.at?.r||0)*2).toFixed(2)} · Z ${(-(s.at?.z||0)).toFixed(2)} · ${plan.passes} черновых проходов · ${elapsed.toFixed(1)} / ${plan.total.toFixed(1)} с`:'Контур готов. Введи ap, подачу и обороты, затем «Пуск».';
+ ctx.fillStyle=light?'#a9bdcf':'#48667f';ctx.beginPath();ctx.moveTo(X(0),axis);ctx.lineTo(X(0),Y(stock[0]));for(let i=0;i<bins;i++)ctx.lineTo(X(i*dz),Y(stock[i]));ctx.lineTo(X(p.l),Y(stock.at(-1)));ctx.lineTo(X(p.l),axis);ctx.closePath();ctx.fill();
+ ctx.strokeStyle=fg;ctx.setLineDash([4,4]);ctx.strokeRect(X(p.l),Y(R),p.l*scale,R*scale);ctx.beginPath();ctx.moveTo(18,axis);ctx.lineTo(w-12,axis);ctx.moveTo(zero,18);ctx.lineTo(zero,h-20);ctx.stroke();ctx.setLineDash([]);
+ ctx.fillStyle=fg;ctx.fillText('X ∅ ↑',zero-42,20);ctx.fillText('Z →',w-36,axis+35);ctx.fillText('0',zero+4,axis+16);ctx.fillText('−'+p.l,X(p.l),axis+16);ctx.fillText('Ø'+p.d,zero+4,Y(R));
+ ctx.strokeStyle=light?'#153650':'#e6edf4';ctx.lineWidth=2;ctx.beginPath();profile.forEach((q,i)=>i?ctx.lineTo(X(q.z),Y(q.r)):ctx.moveTo(X(q.z),Y(q.r)));ctx.stroke();
+ const original=p.points||[];original.forEach((q,i)=>{const a=point(q.x/2,-q.z);ctx.fillStyle=i===original.length-1?'#efb447':fg;ctx.fillRect(a.x-3,a.y-3,6,6)});
+ if(plan){ctx.strokeStyle=light?'#26805b66':'#70dfa866';ctx.lineWidth=1;for(const m of plan.moves){if(!m.cut)continue;ctx.beginPath();ctx.moveTo(X(m.from.z),Y(m.from.r));ctx.lineTo(X(m.to.z),Y(m.to.r));ctx.stroke();}}
+ const tool=s.at||{r:R+2,z:-1},at=point(tool.r,tool.z);ctx.fillStyle='#9aa9b5';ctx.fillRect(at.x-5,at.y-36,25,25);ctx.fillStyle='#dfb344';ctx.beginPath();ctx.moveTo(at.x,at.y);ctx.lineTo(at.x-9,at.y-18);ctx.lineTo(at.x+14,at.y-18);ctx.closePath();ctx.fill();
+ info.textContent=warning|| (plan?`${Math.round(elapsed/plan.total*100)}% · ${s.current?.label||'Обработка завершена'} · X ${((s.at?.r||0)*2).toFixed(2)} · Z ${(-(s.at?.z||0)).toFixed(2)} · ${plan.passes} черновых проходов · ${elapsed.toFixed(1)} / ${plan.total.toFixed(1)} с`:profile.length<2?'Заготовка задана. Создайте стартовую точку и элементы контура.':'Контур готов. Задайте режим обработки и нажмите «Пуск».');
  }
  function tick(t){if(!running||disposed)return;if(last)elapsed=Math.min(plan.total,elapsed+(t-last)/1000*Number(root.querySelector('.sim-rate').value));last=t;draw();if(elapsed>=plan.total){stop();return;}frame=requestAnimationFrame(tick);}
  root.querySelector('.sim-play').onclick=()=>{if(running)return;try{if(!plan)plan=buildPlan(values());if(elapsed>=plan.total)elapsed=0;running=true;last=0;frame=requestAnimationFrame(tick);}catch(e){info.textContent=e.message;}};
  root.querySelector('.sim-pause').onclick=stop;root.querySelector('.sim-reset').onclick=reset;
- const observer=new ResizeObserver(draw);observer.observe(canvas);const themeObserver=new MutationObserver(draw);themeObserver.observe(document.body,{attributes:true,attributeFilter:['class']});editor();draw();
+ const observer=new ResizeObserver(draw);observer.observe(canvas);const themeObserver=new MutationObserver(draw);themeObserver.observe(document.body,{attributes:true,attributeFilter:['class']});draw();
  return {reset,dispose(){disposed=true;stop();observer.disconnect();themeObserver.disconnect();}};
 }
