@@ -1,0 +1,1 @@
+export function calculate(mode,p){for(const [k,v]of Object.entries(p))if(!Number.isFinite(v)||v<=0)throw Error('Введите положительные числа во все поля.');const n=1000*p.vc/(Math.PI*p.d);const feed=mode==='milling'?n*p.f*p.z:mode==='threading'?n*p.pitch:n*p.f;return {n,feed};}
